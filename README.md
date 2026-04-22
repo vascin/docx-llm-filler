@@ -24,6 +24,8 @@
 - Python 3.10+
 - API-ключ Google Gemini (бесплатно получить: <https://aistudio.google.com/apikey>)
 
+> Для free tier важно: модель `gemini-2.0-flash` гео-заблокирована в РФ и ряде других стран (возвращает `limit: 0`). По умолчанию используется `gemini-2.5-flash-lite` — она работает в free tier без геоограничений.
+
 ## Установка
 
 ```bash

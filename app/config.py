@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Runtime configuration for the docx-llm-filler service."""
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash-lite"
     gemini_max_output_tokens: int = 8192
 
     model_config = SettingsConfigDict(
