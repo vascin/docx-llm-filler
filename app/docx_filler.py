@@ -29,6 +29,17 @@ from docx.text.paragraph import Paragraph
 
 from .gemini_client import LLMClient
 
+
+@dataclass
+class _Slot:
+    """A fillable location in the document with a stable integer id."""
+
+    id: int
+    kind: str  # "paragraph" or "cell"
+    text: str
+    paragraph: Paragraph | None = None
+    cell: _Cell | None = None
+
 # Matches {{name}}, {name} (single braces), or [name]. ``name`` is captured
 # without the surrounding delimiters.
 _PLACEHOLDER_RE = re.compile(
@@ -76,6 +87,11 @@ def _paragraph_text(paragraph: Paragraph) -> str:
     return "".join(run.text for run in paragraph.runs) or paragraph.text
 
 
+def _cell_text(cell: _Cell) -> str:
+    """Return the cell's text content joined across its paragraphs."""
+    return "\n".join(_paragraph_text(p) for p in cell.paragraphs).strip()
+
+
 def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
     """Replace a paragraph's text while keeping the first run's formatting.
 
@@ -90,6 +106,24 @@ def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
     runs[0].text = new_text
     for extra in runs[1:]:
         extra.text = ""
+
+
+def _set_cell_text(cell: _Cell, new_text: str) -> None:
+    """Replace a cell's content with ``new_text``.
+
+    The first paragraph is reused (to keep its style); any additional
+    paragraphs inside the cell are removed.
+    """
+    paragraphs = cell.paragraphs
+    if not paragraphs:
+        cell.add_paragraph(new_text)
+        return
+    _set_paragraph_text(paragraphs[0], new_text)
+    for extra in paragraphs[1:]:
+        element = extra._element
+        parent = element.getparent()
+        if parent is not None:
+            parent.remove(element)
 
 
 def find_placeholders(doc: DocxDocument) -> list[str]:
@@ -164,22 +198,33 @@ Respond with a single JSON object whose keys are the placeholder names and
 whose values are the resolved strings. No prose."""
 
 
-_FREEFORM_SYSTEM_PROMPT = """You are an assistant that fills Microsoft Word documents.
+_FREEFORM_SYSTEM_PROMPT = """You are an assistant that fills Microsoft Word document templates, including forms built out of tables.
 
 You will be given:
-1. The document as an ordered list of paragraphs, each with an integer id.
-2. A JSON payload that may be either a direct mapping of values, a knowledge base the assistant must mine for values, or a mix of both.
+1. A "document" containing:
+   - "paragraphs": top-level paragraphs outside any table. Each has an integer "id" and current "text".
+   - "tables": a list of tables. Each table has "rows", and each row is a list of cells. Each cell has an integer "id" and current "text". Merged-cell placeholders may appear as {"merged": true}.
+2. A "data" JSON payload — a mapping of values OR a knowledge base the assistant must mine.
 
-Your job: identify paragraphs that contain blank spots, fill-in prompts, underscores, or questions that should be answered using the JSON payload, and return edited versions of ONLY those paragraphs.
+Cells (or paragraphs) whose "text" is an empty string, contains only underscores / dots / spaces, or is clearly a fill-in placeholder ("_____", "....", "ФИО:") are BLANK FIELDS that need filling.
 
-Respond with a single JSON object of the form:
+The OTHER cells in the same row (and the row above, for header-style tables) identify WHAT should go in each blank. Typical patterns:
+- Row: [row-number, field-label, BLANK]  — fill the BLANK with the value that matches the field-label.
+- Row: [field-label, BLANK]             — same idea, 2 columns.
+- Row: [BLANK, BLANK, BLANK] under a header row [col1-label, col2-label, col3-label] — each blank takes the value for its column's label.
+
+Your job: return edits ONLY for blank fields you can confidently fill from the data payload. Use the adjacent non-blank cells as the label. Write ONLY the value itself (not the label). If a blank cannot be filled from the data, leave it out — do not invent.
+
+Never modify non-blank cells or paragraphs unless they literally contain a fill-in placeholder (underscores/dots prompting input). Never duplicate a label into its own cell.
+
+Respond with exactly one JSON object:
 {"edits": [{"id": <int>, "new_text": "..."}, ...]}
 
 Rules:
-- Only include paragraphs you actually modify. Leave untouched ones out.
+- Output ONLY the ids of blank fields you're filling.
 - Preserve the original language of the document.
-- Do not invent facts that are not present in the payload. If a field cannot be filled, leave the paragraph out.
-- Keep the overall structure and tone of the document."""
+- Numbers, dates and currencies: format them as a human would expect to read them in a finished document.
+- No prose outside the JSON."""
 
 
 def _run_placeholder_mode(
@@ -205,38 +250,77 @@ def _run_placeholder_mode(
     return values, changed
 
 
+def _collect_slots(doc: DocxDocument) -> tuple[list[_Slot], dict[str, Any]]:
+    """Enumerate every fillable slot and produce the LLM-facing structure.
+
+    Each slot is either a top-level paragraph or a table cell (one slot per
+    unique cell, to handle merged cells correctly).
+    """
+    slots: list[_Slot] = []
+    paragraphs_out: list[dict[str, Any]] = []
+    tables_out: list[dict[str, Any]] = []
+
+    for paragraph in doc.paragraphs:
+        text = _paragraph_text(paragraph)
+        slot = _Slot(id=len(slots), kind="paragraph", text=text, paragraph=paragraph)
+        slots.append(slot)
+        paragraphs_out.append({"id": slot.id, "text": text})
+
+    for table_index, table in enumerate(doc.tables):
+        rows_out: list[list[dict[str, Any]]] = []
+        seen: set[int] = set()
+        for row in table.rows:
+            row_out: list[dict[str, Any]] = []
+            for cell in row.cells:
+                cell_key = id(cell._tc)
+                if cell_key in seen:
+                    row_out.append({"merged": True})
+                    continue
+                seen.add(cell_key)
+                text = _cell_text(cell)
+                slot = _Slot(id=len(slots), kind="cell", text=text, cell=cell)
+                slots.append(slot)
+                row_out.append({"id": slot.id, "text": text})
+            rows_out.append(row_out)
+        tables_out.append({"table": table_index, "rows": rows_out})
+
+    structure = {"paragraphs": paragraphs_out, "tables": tables_out}
+    return slots, structure
+
+
 def _run_freeform_mode(
     doc: DocxDocument,
     data: Any,
     llm: LLMClient,
 ) -> int:
-    paragraphs = list(_iter_paragraphs(doc))
-    numbered = [
-        {"id": idx, "text": _paragraph_text(p)}
-        for idx, p in enumerate(paragraphs)
-        if _paragraph_text(p).strip()
-    ]
-    if not numbered:
+    slots, structure = _collect_slots(doc)
+    if not slots:
         return 0
     user_prompt = json.dumps(
-        {"paragraphs": numbered, "data": data},
+        {"document": structure, "data": data},
         ensure_ascii=False,
-        indent=2,
     )
     raw = llm.complete_json(_FREEFORM_SYSTEM_PROMPT, user_prompt)
     edits = raw.get("edits", [])
     if not isinstance(edits, list):
         raise RuntimeError("LLM free-form response must have 'edits' as a list.")
+    by_id = {slot.id: slot for slot in slots}
     changed = 0
     for edit in edits:
         if not isinstance(edit, dict):
             continue
-        idx = edit.get("id")
+        slot_id = edit.get("id")
         new_text = edit.get("new_text")
-        if not isinstance(idx, int) or not isinstance(new_text, str):
+        if not isinstance(slot_id, int) or not isinstance(new_text, str):
             continue
-        if 0 <= idx < len(paragraphs):
-            _set_paragraph_text(paragraphs[idx], new_text)
+        slot = by_id.get(slot_id)
+        if slot is None:
+            continue
+        if slot.kind == "paragraph" and slot.paragraph is not None:
+            _set_paragraph_text(slot.paragraph, new_text)
+            changed += 1
+        elif slot.kind == "cell" and slot.cell is not None:
+            _set_cell_text(slot.cell, new_text)
             changed += 1
     return changed
 

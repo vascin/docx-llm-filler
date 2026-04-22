@@ -137,3 +137,74 @@ def test_fill_document_passes_data_to_llm() -> None:
     payload = json.loads(llm.last_user)
     assert payload["placeholders"] == ["name"]
     assert payload["data"] == data
+
+
+def _make_form_docx_with_table(rows: list[list[str]]) -> bytes:
+    doc = Document()
+    doc.add_paragraph("АНКЕТА")
+    table = doc.add_table(rows=len(rows), cols=len(rows[0]))
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            table.cell(r, c).text = text
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_freeform_mode_fills_empty_table_cells() -> None:
+    """LLM should be able to fill the empty right-hand cells of a form table."""
+    docx_bytes = _make_form_docx_with_table(
+        [
+            ["1.", "Полное наименование", ""],
+            ["2.", "ИНН", ""],
+        ]
+    )
+
+    # Top-level paragraph "АНКЕТА" = slot 0.
+    # Table cells are enumerated row-major starting from slot 1:
+    #   row 0: 1→"1.", 2→"Полное наименование", 3→"" (empty)
+    #   row 1: 4→"2.", 5→"ИНН", 6→"" (empty)
+    llm = StubLLM(
+        json_response={
+            "edits": [
+                {"id": 3, "new_text": "ООО «Ромашка»"},
+                {"id": 6, "new_text": "7701810648"},
+            ]
+        }
+    )
+    result = fill_document(docx_bytes, {"name": "ООО «Ромашка»", "inn": "7701810648"}, llm)
+
+    assert result.mode == "freeform"
+    assert result.changed_paragraphs == 2
+
+    doc = Document(io.BytesIO(result.content))
+    assert doc.tables[0].cell(0, 2).text == "ООО «Ромашка»"
+    assert doc.tables[0].cell(1, 2).text == "7701810648"
+    # Labels should not be touched.
+    assert doc.tables[0].cell(0, 1).text == "Полное наименование"
+    assert doc.tables[0].cell(1, 1).text == "ИНН"
+
+
+def test_freeform_mode_exposes_table_structure_to_llm() -> None:
+    """The prompt to the LLM must carry the grid layout + cell ids."""
+    docx_bytes = _make_form_docx_with_table(
+        [["Имя", ""], ["Возраст", ""]]
+    )
+    llm = StubLLM(json_response={"edits": []})
+    fill_document(docx_bytes, {}, llm)
+
+    payload = json.loads(llm.last_user)
+    doc_struct = payload["document"]
+    assert "tables" in doc_struct
+    tables = doc_struct["tables"]
+    assert len(tables) == 1
+    rows = tables[0]["rows"]
+    # 2 rows × 2 cols, every cell has an id and text.
+    assert len(rows) == 2
+    assert rows[0][0]["text"] == "Имя"
+    assert rows[0][1]["text"] == ""
+    assert rows[1][0]["text"] == "Возраст"
+    assert rows[1][1]["text"] == ""
+    # The ids across all cells must be unique integers.
+    ids = [cell["id"] for row in rows for cell in row]
+    assert len(set(ids)) == len(ids)
