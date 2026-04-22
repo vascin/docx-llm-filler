@@ -11,6 +11,7 @@ Routes:
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
@@ -106,7 +107,7 @@ async def fill(
 
     out_name = _filled_name(template.filename)
     headers = {
-        "Content-Disposition": f'attachment; filename="{out_name}"',
+        "Content-Disposition": _content_disposition(out_name),
         "X-Fill-Mode": result.mode,
         "X-Fill-Changed-Paragraphs": str(result.changed_paragraphs),
     }
@@ -116,3 +117,17 @@ async def fill(
 def _filled_name(original: str) -> str:
     stem = original.rsplit(".", 1)[0] or "filled"
     return f"{stem}.filled.docx"
+
+
+def _content_disposition(filename: str) -> str:
+    """Build an RFC 5987 ``Content-Disposition`` header.
+
+    Starlette encodes outgoing header values as latin-1, which fails for
+    filenames containing Cyrillic or any non-ASCII characters. We emit both
+    an ASCII ``filename`` fallback and an UTF-8 ``filename*`` parameter so
+    modern browsers pick up the original name while legacy clients still see
+    something sensible.
+    """
+    ascii_fallback = filename.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+    encoded = quote(filename, safe="")
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
