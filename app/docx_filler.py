@@ -100,7 +100,32 @@ _W_T = qn("w:t")
 _W_P = qn("w:p")
 _W_PPR = qn("w:pPr")
 _W_RPR = qn("w:rPr")
+_W_TBL = qn("w:tbl")
+_W_TBLPR = qn("w:tblPr")
+_W_TBL_LAYOUT = qn("w:tblLayout")
 _XML_SPACE = qn("xml:space")
+
+
+def _force_fixed_table_layout(doc: DocxDocument) -> None:
+    """Lock every table's column widths against Word's auto-rebalancing.
+
+    Word's default table layout is ``auto``: column widths are recomputed
+    based on cell content. That's fine for prose but destructive for
+    fill-in-the-blanks forms — after values are inserted into empty cells,
+    the value column grows and label columns shrink, wrapping labels onto
+    many lines. Setting ``tblLayout=fixed`` pins columns to the explicit
+    widths in ``<w:tblGrid>``/``<w:tcW>``, preserving the template's visual
+    proportions regardless of the text that's added.
+    """
+    for tbl in doc.element.body.iter(_W_TBL):
+        tblpr = tbl.find(_W_TBLPR)
+        if tblpr is None:
+            tblpr = etree.SubElement(tbl, _W_TBLPR)
+            tbl.insert(0, tblpr)
+        for old in tblpr.findall(_W_TBL_LAYOUT):
+            tblpr.remove(old)
+        layout = etree.SubElement(tblpr, _W_TBL_LAYOUT)
+        layout.set(qn("w:type"), "fixed")
 
 
 def _write_text_into_run(run_el: etree._Element, new_text: str) -> None:
@@ -453,6 +478,8 @@ def fill_document(docx_bytes: bytes, data: Any, llm: LLMClient) -> FillResult:
     else:
         changed = _run_freeform_mode(doc, data, llm)
         mode = "freeform"
+
+    _force_fixed_table_layout(doc)
 
     buffer = io.BytesIO()
     doc.save(buffer)
