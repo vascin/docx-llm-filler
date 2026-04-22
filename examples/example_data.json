@@ -1,0 +1,16 @@
+{
+  "client": {
+    "name": "ООО «Ромашка»",
+    "contact": "Иван Петров",
+    "email": "ivan.petrov@romashka.example"
+  },
+  "company": {
+    "name": "Ромашка-Консалт",
+    "service": "аудит информационной безопасности"
+  },
+  "offer": {
+    "amount": 450000,
+    "currency": "RUB",
+    "deadline": "30 рабочих дней с момента подписания договора"
+  }
+}

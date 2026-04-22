@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>docx-llm-filler</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>docx-llm-filler</h1>
+      <p class="sub">
+        Загрузите Word-шаблон и JSON с данными — Gemini заполнит документ и вернёт его обратно.
+      </p>
+
+      {% if not has_key %}
+      <div class="warn">
+        <strong>GEMINI_API_KEY не задан.</strong> Укажите ключ в <code>.env</code> или
+        переменных окружения, иначе заполнение не сработает.
+      </div>
+      {% endif %}
+
+      <form id="form" enctype="multipart/form-data">
+        <label>
+          <span>Word-шаблон (.docx)</span>
+          <input type="file" name="template" accept=".docx" required />
+        </label>
+
+        <label>
+          <span>JSON с данными (.json)</span>
+          <input type="file" name="data" accept="application/json,.json" required />
+        </label>
+
+        <button type="submit" id="submit">Заполнить и скачать</button>
+      </form>
+
+      <div id="status" class="status" hidden></div>
+
+      <section class="hint">
+        <h2>Как это работает</h2>
+        <ul>
+          <li>
+            Если в шаблоне есть плейсхолдеры вида <code>{{'{{ имя }}'}}</code>,
+            <code>{ имя }</code> или <code>[ имя ]</code> — LLM подставит значения на их места.
+          </li>
+          <li>
+            Если плейсхолдеров нет — LLM пройдёт по абзацам и заполнит пустые места,
+            опираясь на JSON как на источник данных.
+          </li>
+          <li>JSON может быть и словарём <code>{"поле": "значение"}</code>, и произвольной базой знаний.</li>
+          <li>Модель: <code>{{ model }}</code></li>
+        </ul>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("form");
+      const status = document.getElementById("status");
+      const submit = document.getElementById("submit");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.hidden = false;
+        status.className = "status";
+        status.textContent = "Заполняем документ, это может занять 10–40 секунд...";
+        submit.disabled = true;
+
+        try {
+          const formData = new FormData(form);
+          const response = await fetch("/fill", { method: "POST", body: formData });
+          if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(`HTTP ${response.status}: ${detail}`);
+          }
+          const blob = await response.blob();
+          const disposition = response.headers.get("Content-Disposition") || "";
+          const match = /filename="?([^";]+)"?/i.exec(disposition);
+          const filename = match ? match[1] : "filled.docx";
+          const mode = response.headers.get("X-Fill-Mode") || "?";
+          const changed = response.headers.get("X-Fill-Changed-Paragraphs") || "?";
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          status.className = "status ok";
+          status.textContent = `Готово. Режим: ${mode}, изменённых абзацев: ${changed}.`;
+        } catch (err) {
+          status.className = "status err";
+          status.textContent = `Ошибка: ${err.message}`;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
