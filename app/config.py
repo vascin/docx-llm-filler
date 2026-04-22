@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash-lite"
-    gemini_max_output_tokens: int = 8192
+    gemini_max_output_tokens: int = 65536
 
     model_config = SettingsConfigDict(
         env_file=".env",
