@@ -19,13 +19,16 @@ from __future__ import annotations
 import io
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from docx import Document
 from docx.document import Document as DocxDocument
+from docx.oxml.ns import qn
 from docx.table import _Cell
 from docx.text.paragraph import Paragraph
+from lxml import etree
 
 from .gemini_client import LLMClient
 
@@ -92,38 +95,138 @@ def _cell_text(cell: _Cell) -> str:
     return "\n".join(_paragraph_text(p) for p in cell.paragraphs).strip()
 
 
-def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
-    """Replace a paragraph's text while keeping the first run's formatting.
+_W_R = qn("w:r")
+_W_T = qn("w:t")
+_W_P = qn("w:p")
+_W_PPR = qn("w:pPr")
+_W_RPR = qn("w:rPr")
+_XML_SPACE = qn("xml:space")
 
-    All runs are collapsed into the first run; any extras are cleared. This
-    loses per-run formatting (bold/italic inside a paragraph) but keeps the
-    paragraph-level style, which is what users expect when filling templates.
+
+def _write_text_into_run(run_el: etree._Element, new_text: str) -> None:
+    """Replace the text content of a run element with ``new_text``.
+
+    The run's ``rPr`` (formatting) is left untouched. Any existing ``w:t``
+    children are removed; a single new ``w:t`` is appended (with
+    ``xml:space="preserve"`` so leading/trailing spaces survive).
     """
-    runs = paragraph.runs
-    if not runs:
-        paragraph.add_run(new_text)
+    for child in list(run_el):
+        if child.tag == _W_T:
+            run_el.remove(child)
+    t_el = etree.SubElement(run_el, _W_T)
+    t_el.set(_XML_SPACE, "preserve")
+    t_el.text = new_text
+
+
+def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
+    """Replace a paragraph's text while preserving its font/formatting.
+
+    Word stores formatting on ``<w:r>`` elements via ``<w:rPr>``. Empty cells
+    in a template often contain a placeholder run with ``<w:rPr>`` set to the
+    document's intended font (e.g. Arial 10pt) but no actual ``<w:t>`` text.
+    To keep that font we reuse the existing run and write into its ``<w:t>``
+    rather than adding a brand-new run (which would inherit the document
+    default, usually Calibri 11).
+
+    If the paragraph has no runs at all, we synthesise one and copy any
+    ``rPr`` from the paragraph's ``pPr`` as the closest available style hint.
+    """
+    p_el = paragraph._element
+    runs = p_el.findall(_W_R)
+    if runs:
+        _write_text_into_run(runs[0], new_text)
+        for extra in runs[1:]:
+            p_el.remove(extra)
         return
-    runs[0].text = new_text
-    for extra in runs[1:]:
-        extra.text = ""
+
+    ppr = p_el.find(_W_PPR)
+    rpr_template = ppr.find(_W_RPR) if ppr is not None else None
+    new_r = etree.SubElement(p_el, _W_R)
+    if rpr_template is not None:
+        new_r.insert(0, deepcopy(rpr_template))
+    _write_text_into_run(new_r, new_text)
+
+
+def _find_style_donor_rpr(cell: _Cell) -> etree._Element | None:
+    """Return an ``<w:rPr>`` to use as a formatting donor for an empty cell.
+
+    We look in order at:
+    1. Any run inside the same cell (empty runs often carry the correct rPr).
+    2. ``<w:rPr>`` nested in any paragraph's ``<w:pPr>`` inside the cell.
+    3. Any run inside a sibling cell of the same row.
+    4. ``<w:pPr>/<w:rPr>`` of any paragraph in a sibling cell.
+    """
+    tc = cell._tc
+    for r in tc.iter(_W_R):
+        rpr = r.find(_W_RPR)
+        if rpr is not None:
+            return rpr
+    for p in tc.iter(_W_P):
+        ppr = p.find(_W_PPR)
+        if ppr is not None:
+            rpr = ppr.find(_W_RPR)
+            if rpr is not None:
+                return rpr
+
+    tr = tc.getparent()
+    if tr is None:
+        return None
+    for sibling_tc in tr:
+        if sibling_tc is tc:
+            continue
+        for r in sibling_tc.iter(_W_R):
+            rpr = r.find(_W_RPR)
+            if rpr is not None:
+                return rpr
+        for p in sibling_tc.iter(_W_P):
+            ppr = p.find(_W_PPR)
+            if ppr is not None:
+                rpr = ppr.find(_W_RPR)
+                if rpr is not None:
+                    return rpr
+    return None
 
 
 def _set_cell_text(cell: _Cell, new_text: str) -> None:
-    """Replace a cell's content with ``new_text``.
+    """Replace a cell's content with ``new_text`` preserving cell/row font.
 
-    The first paragraph is reused (to keep its style); any additional
-    paragraphs inside the cell are removed.
+    Strategy:
+    - If the cell already has a run with text content, rewrite its text.
+    - Else if it has a run (with or without ``rPr``) but no text, reuse it so
+      the template's empty-cell formatting survives.
+    - Else if ``<w:rPr>`` can be borrowed from a neighbouring cell in the row,
+      create a new run carrying that ``rPr`` clone.
+    - Only as a last resort fall back to an unstyled ``cell.add_paragraph``.
+
+    Extra paragraphs inside the cell are removed — templates often use a
+    multi-line empty cell (4+ blank paragraphs) to reserve vertical space; we
+    keep a single paragraph with the filled value.
     """
-    paragraphs = cell.paragraphs
+    tc = cell._tc
+    paragraphs = tc.findall(_W_P)
     if not paragraphs:
         cell.add_paragraph(new_text)
         return
-    _set_paragraph_text(paragraphs[0], new_text)
-    for extra in paragraphs[1:]:
-        element = extra._element
-        parent = element.getparent()
-        if parent is not None:
-            parent.remove(element)
+
+    first_p = paragraphs[0]
+    runs = first_p.findall(_W_R)
+    if runs:
+        _write_text_into_run(runs[0], new_text)
+        for extra in runs[1:]:
+            first_p.remove(extra)
+    else:
+        rpr_donor = _find_style_donor_rpr(cell)
+        if rpr_donor is None:
+            ppr = first_p.find(_W_PPR)
+            if ppr is not None:
+                rpr_donor = ppr.find(_W_RPR)
+        new_r = etree.SubElement(first_p, _W_R)
+        if rpr_donor is not None:
+            new_r.insert(0, deepcopy(rpr_donor))
+        _write_text_into_run(new_r, new_text)
+
+    for extra_p in paragraphs[1:]:
+        tc.remove(extra_p)
 
 
 def find_placeholders(doc: DocxDocument) -> list[str]:
