@@ -118,25 +118,29 @@ def _write_text_into_run(run_el: etree._Element, new_text: str) -> None:
     t_el.text = new_text
 
 
+def _clear_run_text(run_el: etree._Element) -> None:
+    """Remove text nodes (``<w:t>``, ``<w:br>``, ``<w:tab>``) from a run."""
+    for child in list(run_el):
+        if child.tag in (_W_T, qn("w:br"), qn("w:tab")):
+            run_el.remove(child)
+
+
 def _set_paragraph_text(paragraph: Paragraph, new_text: str) -> None:
-    """Replace a paragraph's text while preserving its font/formatting.
+    """Put ``new_text`` in the first run of the paragraph, untouched elsewhere.
 
-    Word stores formatting on ``<w:r>`` elements via ``<w:rPr>``. Empty cells
-    in a template often contain a placeholder run with ``<w:rPr>`` set to the
-    document's intended font (e.g. Arial 10pt) but no actual ``<w:t>`` text.
-    To keep that font we reuse the existing run and write into its ``<w:t>``
-    rather than adding a brand-new run (which would inherit the document
-    default, usually Calibri 11).
-
-    If the paragraph has no runs at all, we synthesise one and copy any
-    ``rPr`` from the paragraph's ``pPr`` as the closest available style hint.
+    We deliberately keep the paragraph's existing runs in place so that any
+    surrounding formatting, tab stops, hyperlinks, bookmarks or whitespace
+    stays intact. Only the first run gets its text rewritten; any other runs
+    in the same paragraph are cleared of their own text content but kept as
+    XML nodes (they often carry trailing spaces or vertical-space holders
+    used by the template to preserve layout).
     """
     p_el = paragraph._element
     runs = p_el.findall(_W_R)
     if runs:
         _write_text_into_run(runs[0], new_text)
         for extra in runs[1:]:
-            p_el.remove(extra)
+            _clear_run_text(extra)
         return
 
     ppr = p_el.find(_W_PPR)
@@ -188,19 +192,20 @@ def _find_style_donor_rpr(cell: _Cell) -> etree._Element | None:
 
 
 def _set_cell_text(cell: _Cell, new_text: str) -> None:
-    """Replace a cell's content with ``new_text`` preserving cell/row font.
+    """Put ``new_text`` in the first run of the cell's first paragraph.
 
-    Strategy:
-    - If the cell already has a run with text content, rewrite its text.
-    - Else if it has a run (with or without ``rPr``) but no text, reuse it so
-      the template's empty-cell formatting survives.
-    - Else if ``<w:rPr>`` can be borrowed from a neighbouring cell in the row,
-      create a new run carrying that ``rPr`` clone.
-    - Only as a last resort fall back to an unstyled ``cell.add_paragraph``.
+    The cell's XML is preserved byte-for-byte except for one ``<w:t>`` node.
+    We never remove paragraphs or runs (that would collapse vertical space
+    and change column/row proportions of the template). Other paragraphs
+    and other runs in the first paragraph keep their ``rPr`` but lose any
+    stale ``<w:t>`` content so the cell effectively shows only ``new_text``.
 
-    Extra paragraphs inside the cell are removed — templates often use a
-    multi-line empty cell (4+ blank paragraphs) to reserve vertical space; we
-    keep a single paragraph with the filled value.
+    If no runs exist at all in the first paragraph, we synthesise one,
+    copying formatting (``rPr``) from:
+    1. an existing run anywhere inside the same cell, or
+    2. any sibling cell's run in the same row, or
+    3. the paragraph's own ``pPr/rPr``.
+    That keeps font/size consistent with the rest of the row.
     """
     tc = cell._tc
     paragraphs = tc.findall(_W_P)
@@ -210,10 +215,11 @@ def _set_cell_text(cell: _Cell, new_text: str) -> None:
 
     first_p = paragraphs[0]
     runs = first_p.findall(_W_R)
+
     if runs:
         _write_text_into_run(runs[0], new_text)
         for extra in runs[1:]:
-            first_p.remove(extra)
+            _clear_run_text(extra)
     else:
         rpr_donor = _find_style_donor_rpr(cell)
         if rpr_donor is None:
@@ -225,8 +231,11 @@ def _set_cell_text(cell: _Cell, new_text: str) -> None:
             new_r.insert(0, deepcopy(rpr_donor))
         _write_text_into_run(new_r, new_text)
 
+    # Clear any text from sibling paragraphs in the cell (they remain as
+    # empty-line spacers, keeping the original row height).
     for extra_p in paragraphs[1:]:
-        tc.remove(extra_p)
+        for r in extra_p.findall(_W_R):
+            _clear_run_text(r)
 
 
 def find_placeholders(doc: DocxDocument) -> list[str]:
