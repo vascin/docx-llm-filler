@@ -10,7 +10,8 @@
     <main>
       <h1>docx-llm-filler</h1>
       <p class="sub">
-        Загрузите Word-шаблон и JSON с данными — Gemini заполнит документ и вернёт его обратно.
+        Загрузите Word-шаблон и файл с данными — Gemini заполнит документ и вернёт его обратно.
+        Источник данных: JSON, Word (.docx), Excel (.xlsx), текст (.txt / .md), CSV.
       </p>
 
       {% if not has_key %}
@@ -27,8 +28,13 @@
         </label>
 
         <label>
-          <span>JSON с данными (.json)</span>
-          <input type="file" name="data" accept="application/json,.json" required />
+          <span>Источник данных ({{ supported_extensions }})</span>
+          <input
+            type="file"
+            name="data"
+            accept=".json,.txt,.md,.csv,.xlsx,.docx,application/json,text/plain,text/csv,text/markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            required
+          />
         </label>
 
         <button type="submit" id="submit">Заполнить и скачать</button>

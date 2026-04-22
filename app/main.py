@@ -10,7 +10,6 @@ Routes:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -19,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import get_settings
+from .data_sources import SUPPORTED_EXTENSIONS, UnsupportedDataFormat, parse_data_file
 from .docx_filler import fill_document
 from .gemini_client import GeminiClient
 
@@ -56,6 +56,7 @@ def index(request: Request) -> HTMLResponse:
         {
             "model": settings.gemini_model,
             "has_key": bool(settings.gemini_api_key),
+            "supported_extensions": ", ".join(SUPPORTED_EXTENSIONS),
         },
     )
 
@@ -68,12 +69,15 @@ def health() -> dict[str, str]:
 @app.post("/fill")
 async def fill(
     template: UploadFile = File(..., description=".docx template to fill"),
-    data: UploadFile = File(..., description="JSON data source"),
+    data: UploadFile = File(
+        ...,
+        description=f"Data source ({', '.join(SUPPORTED_EXTENSIONS)})",
+    ),
 ) -> Response:
     if not template.filename or not template.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="'template' must be a .docx file.")
-    if not data.filename or not data.filename.lower().endswith(".json"):
-        raise HTTPException(status_code=400, detail="'data' must be a .json file.")
+    if not data.filename:
+        raise HTTPException(status_code=400, detail="'data' must have a filename.")
 
     docx_bytes = await template.read()
     data_bytes = await data.read()
@@ -84,13 +88,11 @@ async def fill(
         raise HTTPException(status_code=400, detail="Data file is empty.")
 
     try:
-        payload = json.loads(data_bytes.decode("utf-8"))
-    except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Data file is not valid UTF-8: {exc}"
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"Data file is not valid JSON: {exc}") from exc
+        payload = parse_data_file(data.filename, data_bytes)
+    except UnsupportedDataFormat as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse data file: {exc}") from exc
 
     try:
         llm = _build_llm()
