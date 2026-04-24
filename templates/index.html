@@ -25,17 +25,50 @@
         </p>
       </header>
 
-      {% if not has_key %}
-      <div class="warn">
-        <strong>Ключ доступа не задан.</strong> Пока ключ не добавлен
-        в переменные окружения, заполнение не будет работать.
-      </div>
-      {% endif %}
-
       <form id="form" enctype="multipart/form-data" novalidate>
         <div class="field">
+          <label for="provider">
+            <span class="field-title">1. Выберите ассистента</span>
+            <span class="field-hint">Какую нейросеть использовать для заполнения</span>
+          </label>
+          <select id="provider" name="provider">
+            {% for p in providers %}
+            <option value="{{ p.id }}"
+              data-key-label="{{ p.key_label }}"
+              data-key-placeholder="{{ p.key_placeholder }}"
+              data-extra-label="{{ p.extra_label or '' }}"
+              data-extra-placeholder="{{ p.extra_placeholder or '' }}"
+              data-help="{{ p.help }}"
+              {% if p.id == default_provider %}selected{% endif %}>{{ p.label }}</option>
+            {% endfor %}
+          </select>
+          <p id="provider-help" class="field-note"></p>
+        </div>
+
+        <div class="field" id="key-field">
+          <label for="api-key">
+            <span class="field-title" id="key-label">Ключ API</span>
+            <span class="field-hint" id="key-hint">
+              Ключ используется только для этого запроса, напрямую уходит в выбранного
+              провайдера и на сервере не сохраняется.
+            </span>
+          </label>
+          <input id="api-key" name="api_key" type="password" autocomplete="off" spellcheck="false" required />
+        </div>
+
+        <div class="field" id="extra-field" hidden>
+          <label for="extra">
+            <span class="field-title" id="extra-label">Доп. параметр</span>
+            <span class="field-hint" id="extra-hint">
+              Нужен для GigaChat (scope) и YandexGPT (folder_id).
+            </span>
+          </label>
+          <input id="extra" name="extra" type="text" autocomplete="off" spellcheck="false" />
+        </div>
+
+        <div class="field">
           <label for="file-template">
-            <span class="field-title">1. Выберите документ для заполнения</span>
+            <span class="field-title">2. Выберите документ для заполнения</span>
             <span class="field-hint">Word-файл (.docx): анкета, договор, заявление</span>
           </label>
           <div class="dropzone" data-target="file-template">
@@ -50,7 +83,7 @@
 
         <div class="field">
           <label for="file-data">
-            <span class="field-title">2. Выберите источник информации</span>
+            <span class="field-title">3. Выберите источник информации</span>
             <span class="field-hint">Откуда брать данные: анкета клиента, таблица, выписка, заметка. Поддерживаются Word, Excel, CSV, текст или JSON.</span>
           </label>
           <div class="dropzone" data-target="file-data">
@@ -88,7 +121,10 @@
             Оформление документа не пострадает: шрифты, размеры, ширина колонок
             и структура таблиц сохраняются.
           </li>
-          <li class="muted-note">Техническая модель: <code>{{ model }}</code></li>
+          <li class="muted-note">
+            Ключ провайдера вводится только в браузере и уходит напрямую
+            в запрос — на сервере он не сохраняется и не логируется.
+          </li>
         </ul>
       </section>
     </main>
@@ -97,6 +133,37 @@
       const form = document.getElementById("form");
       const statusBox = document.getElementById("status");
       const submit = document.getElementById("submit");
+
+      // Provider selector → sync labels / placeholders
+      const providerSelect = document.getElementById("provider");
+      const keyField = document.getElementById("key-field");
+      const keyLabel = document.getElementById("key-label");
+      const keyHint = document.getElementById("key-hint");
+      const keyInput = document.getElementById("api-key");
+      const extraField = document.getElementById("extra-field");
+      const extraLabel = document.getElementById("extra-label");
+      const extraInput = document.getElementById("extra");
+      const providerHelp = document.getElementById("provider-help");
+
+      function syncProvider() {
+        const opt = providerSelect.options[providerSelect.selectedIndex];
+        keyLabel.textContent = opt.dataset.keyLabel || "Ключ API";
+        keyInput.placeholder = opt.dataset.keyPlaceholder || "";
+        keyHint.textContent =
+          "Ключ используется только для этого запроса, напрямую уходит в выбранного провайдера и на сервере не сохраняется.";
+        const extraLbl = opt.dataset.extraLabel || "";
+        if (extraLbl) {
+          extraField.hidden = false;
+          extraLabel.textContent = extraLbl;
+          extraInput.placeholder = opt.dataset.extraPlaceholder || "";
+        } else {
+          extraField.hidden = true;
+          extraInput.value = "";
+        }
+        providerHelp.textContent = opt.dataset.help || "";
+      }
+      providerSelect.addEventListener("change", syncProvider);
+      syncProvider();
 
       // File name label update
       document.querySelectorAll(".dropzone").forEach((zone) => {

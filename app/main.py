@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from .config import get_settings
 from .data_sources import SUPPORTED_EXTENSIONS, UnsupportedDataFormat, parse_data_file
 from .docx_filler import fill_document
-from .gemini_client import GeminiClient
+from .llm_factory import DEFAULT_PROVIDER, PROVIDER_INFO, PROVIDERS, build_llm
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -39,15 +39,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _build_llm() -> GeminiClient:
-    settings = get_settings()
-    return GeminiClient(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        max_output_tokens=settings.gemini_max_output_tokens,
-    )
-
-
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     settings = get_settings()
@@ -56,7 +47,8 @@ def index(request: Request) -> HTMLResponse:
         "index.html",
         {
             "model": settings.gemini_model,
-            "has_key": bool(settings.gemini_api_key),
+            "providers": [PROVIDER_INFO[p] for p in PROVIDERS],
+            "default_provider": DEFAULT_PROVIDER,
             "supported_extensions": ", ".join(SUPPORTED_EXTENSIONS),
         },
     )
@@ -74,6 +66,9 @@ async def fill(
         ...,
         description=f"Data source ({', '.join(SUPPORTED_EXTENSIONS)})",
     ),
+    provider: str = Form(DEFAULT_PROVIDER, description="LLM provider id"),
+    api_key: str = Form("", description="Optional user-supplied API key"),
+    extra: str = Form("", description="Optional second credential (scope / folder_id)"),
 ) -> Response:
     if not template.filename or not template.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="'template' must be a .docx file.")
@@ -95,10 +90,11 @@ async def fill(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Failed to parse data file: {exc}") from exc
 
+    settings = get_settings()
     try:
-        llm = _build_llm()
+        llm = build_llm(provider, settings, api_key=api_key, extra=extra)
     except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         result = fill_document(docx_bytes, payload, llm)
@@ -110,6 +106,7 @@ async def fill(
         "Content-Disposition": _content_disposition(out_name),
         "X-Fill-Mode": result.mode,
         "X-Fill-Changed-Paragraphs": str(result.changed_paragraphs),
+        "X-Fill-Provider": provider,
     }
     return Response(content=result.content, media_type=DOCX_MIME, headers=headers)
 
