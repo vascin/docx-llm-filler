@@ -63,7 +63,11 @@ class GigaChatClient:
                 "GigaChat authorization key is not configured. "
                 "Set GIGACHAT_AUTH_KEY or pass a key in the request."
             )
-        self._auth_key = auth_key
+        # Sanitise user input: strip whitespace / accidental "Basic " prefix.
+        clean = auth_key.strip()
+        if clean.lower().startswith("basic "):
+            clean = clean[len("basic "):].strip()
+        self._auth_key = clean
         self._scope = scope or "GIGACHAT_API_PERS"
         self._model = model
         self._max_output_tokens = max_output_tokens
@@ -147,11 +151,15 @@ class GigaChatClient:
             timeout=self._timeout,
         )
         if response.status_code >= 400:
+            hint = (
+                "Проверьте Authorization Key и выбранный scope "
+                "(GIGACHAT_API_PERS / GIGACHAT_API_CORP / GIGACHAT_API_B2B). "
+                "Ключ можно сгенерировать заново в личном кабинете "
+                "https://developers.sber.ru/studio → Настройки API → Получить ключ."
+            )
             raise RuntimeError(
                 "GigaChat OAuth failed: HTTP "
-                f"{response.status_code} {response.text[:500]}. "
-                "Проверьте Authorization Key и выбранный scope "
-                "(GIGACHAT_API_PERS / GIGACHAT_API_CORP)."
+                f"{response.status_code} {response.text[:500]}\n{hint}"
             )
         data = response.json()
         token = data.get("access_token")

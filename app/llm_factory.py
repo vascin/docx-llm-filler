@@ -57,8 +57,9 @@ PROVIDER_INFO: dict[str, ProviderInfo] = {
         extra_label="Scope",
         extra_placeholder="GIGACHAT_API_PERS",
         help=(
-            "Получить ключ: https://developers.sber.ru/studio. "
-            "Scope — обычно GIGACHAT_API_PERS (физлицо) или GIGACHAT_API_CORP (юрлицо)."
+            "Получить ключ: https://developers.sber.ru/studio → Настройки API → Получить ключ. "
+            "Scope — обычно GIGACHAT_API_PERS (физлицо) или "
+            "GIGACHAT_API_CORP / GIGACHAT_API_B2B (юрлицо)."
         ),
     ),
     "yandex": ProviderInfo(
