@@ -10,14 +10,22 @@ GigaChat uses a two-step authentication:
 
 The OpenAI-compatible chat endpoint is used, so the request/response shape
 matches the rest of the ecosystem.
+
+GigaChat endpoints use certificates signed by the Russian Trusted Root CA
+which is absent from standard CA bundles. The bundled
+``app/certs/russian_trusted_ca.pem`` is appended to the system trust store
+at runtime so that SSL verification works out of the box.
 """
 
 from __future__ import annotations
 
+import ssl
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
+import certifi
 import httpx
 
 from .gemini_client import LLMClient, _parse_json_lenient  # noqa: F401 (LLMClient re-export)
@@ -25,6 +33,17 @@ from .gemini_client import LLMClient, _parse_json_lenient  # noqa: F401 (LLMClie
 _OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 _CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 _TOKEN_LEEWAY_SECONDS = 60.0
+
+_CERTS_DIR = Path(__file__).resolve().parent / "certs"
+_RUSSIAN_CA = _CERTS_DIR / "russian_trusted_ca.pem"
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Create an SSL context that trusts both system CAs and the Russian CA."""
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    if _RUSSIAN_CA.exists():
+        ctx.load_verify_locations(cafile=str(_RUSSIAN_CA))
+    return ctx
 
 
 class GigaChatClient:
@@ -52,6 +71,9 @@ class GigaChatClient:
         self._timeout = timeout
         self._access_token: str | None = None
         self._expires_at: float = 0.0
+        self._ssl_ctx: ssl.SSLContext | None = (
+            _build_ssl_context() if verify_ssl else None
+        )
 
     def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         text = self._chat(system_prompt, user_prompt, as_json=True)
@@ -78,19 +100,20 @@ class GigaChatClient:
             "temperature": 0.2,
             "max_tokens": self._max_output_tokens,
         }
-        if as_json:
-            # GigaChat follows OpenAI's ``response_format`` convention.
-            payload["response_format"] = {"type": "json_object"}
+        # Not all GigaChat models support ``response_format``.  We rely on
+        # the system prompt to request JSON and parse it with
+        # ``_parse_json_lenient`` which tolerates markdown fences and preamble.
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        verify = self._ssl_ctx if self._ssl_ctx is not None else False
         response = httpx.post(
             _CHAT_URL,
             json=payload,
             headers=headers,
-            verify=self._verify_ssl,
+            verify=verify,
             timeout=self._timeout,
         )
         if response.status_code >= 400:
@@ -115,11 +138,12 @@ class GigaChatClient:
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
         }
+        verify = self._ssl_ctx if self._ssl_ctx is not None else False
         response = httpx.post(
             _OAUTH_URL,
             data={"scope": self._scope},
             headers=headers,
-            verify=self._verify_ssl,
+            verify=verify,
             timeout=self._timeout,
         )
         if response.status_code >= 400:
