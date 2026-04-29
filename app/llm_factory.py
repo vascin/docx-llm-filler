@@ -5,6 +5,8 @@ Providers:
 * ``gemini``   — Google Gemini.
 * ``gigachat`` — Sber GigaChat.
 * ``yandex``   — Yandex Cloud YandexGPT.
+* ``ollama``   — Local Ollama instance.
+* ``wormsoft`` — Wormsoft OpenAI-compatible API.
 
 API keys are always supplied by the user via the web form and are never
 read from server-side settings.
@@ -17,9 +19,11 @@ from dataclasses import dataclass
 from .config import Settings
 from .gemini_client import GeminiClient, LLMClient
 from .gigachat_client import GigaChatClient
+from .ollama_client import OllamaClient
+from .wormsoft_client import WormsoftClient
 from .yandex_client import YandexGPTClient
 
-PROVIDERS: tuple[str, ...] = ("gemini", "gigachat", "yandex")
+PROVIDERS: tuple[str, ...] = ("gemini", "gigachat", "yandex", "ollama", "wormsoft")
 DEFAULT_PROVIDER = "gemini"
 
 
@@ -34,6 +38,7 @@ class ProviderInfo:
     extra_label: str | None
     extra_placeholder: str | None
     help: str
+    key_required: bool = True
 
 
 PROVIDER_INFO: dict[str, ProviderInfo] = {
@@ -74,6 +79,28 @@ PROVIDER_INFO: dict[str, ProviderInfo] = {
             "Нужны и Api-Key, и идентификатор каталога (folder_id)."
         ),
     ),
+    "ollama": ProviderInfo(
+        id="ollama",
+        label="Ollama (локальный)",
+        key_label="Имя модели",
+        key_placeholder="gemma3:1b",
+        extra_label="URL сервера",
+        extra_placeholder="http://localhost:11434",
+        help=(
+            "Запустите Ollama: OLLAMA_ORIGINS=* ollama serve. "
+            "Рекомендуемые модели: gemma3:1b, qwen2.5:1.5b, llama3.2:3b."
+        ),
+        key_required=False,
+    ),
+    "wormsoft": ProviderInfo(
+        id="wormsoft",
+        label="Wormsoft (GPT)",
+        key_label="API Key Wormsoft",
+        key_placeholder="b95d25f5...",
+        extra_label=None,
+        extra_placeholder=None,
+        help="OpenAI-совместимый API. Модель: openai/gpt-5.3-codex.",
+    ),
 }
 
 
@@ -84,13 +111,7 @@ def build_llm(
     api_key: str,
     extra: str = "",
 ) -> LLMClient:
-    """Build the concrete LLM client for ``provider`` from the user's key.
-
-    ``api_key`` is always required — the server does not fall back to any
-    environment variable or stored credential. ``extra`` is the second
-    piece of credential some providers need (GigaChat ``scope``, Yandex
-    ``folder_id``).
-    """
+    """Build the concrete LLM client for ``provider`` from the user's key."""
     provider = (provider or DEFAULT_PROVIDER).strip().lower()
     if provider not in PROVIDERS:
         raise ValueError(
@@ -98,7 +119,9 @@ def build_llm(
         )
     api_key = (api_key or "").strip()
     extra = (extra or "").strip()
-    if not api_key:
+
+    info = PROVIDER_INFO.get(provider)
+    if info and info.key_required and not api_key:
         raise ValueError(
             "Не заполнен API-ключ провайдера. Введите свой ключ в форме на странице — "
             "на сервере ключи не хранятся."
@@ -129,5 +152,15 @@ def build_llm(
             folder_id=extra,
             model=settings.yandex_model,
             max_output_tokens=settings.yandex_max_output_tokens,
+        )
+    if provider == "ollama":
+        return OllamaClient(
+            model=api_key or "gemma3:1b",
+            base_url=extra or "http://localhost:11434",
+        )
+    if provider == "wormsoft":
+        return WormsoftClient(
+            api_key=api_key,
+            model="openai/gpt-5.3-codex",
         )
     raise AssertionError(f"unreachable: unhandled provider {provider!r}")

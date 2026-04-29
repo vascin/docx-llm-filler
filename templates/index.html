@@ -4,139 +4,163 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Умный заполнитель документов</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=3" />
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/docx-preview@0.3.7/dist/docx-preview.min.js"></script>
   </head>
   <body>
-    <main>
-      <header class="hero">
-        <div class="logo" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="44" height="44" fill="none">
-            <rect x="4" y="3" width="26" height="34" rx="3" fill="currentColor" opacity="0.15"/>
-            <rect x="4" y="3" width="26" height="34" rx="3" stroke="currentColor" stroke-width="2"/>
-            <path d="M10 13h14M10 19h14M10 25h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <circle cx="31" cy="31" r="6" fill="currentColor"/>
-            <path d="M28 31l2 2 4-4" stroke="#0f1117" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <h1>Умный заполнитель документов</h1>
-        <p class="sub">
-          Загрузите анкету или договор в Word и файл с вашими данными —
-          ассистент сам разберётся, куда что вставить, и сохранит всё оформление.
-        </p>
-      </header>
+    <div class="layout">
+      <!-- Left: form -->
+      <aside class="sidebar-form" id="sidebar-form">
+        <header class="hero">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:4px;">
+            <button type="button" class="theme-toggle" id="theme-toggle" title="Переключить тему">🌙</button>
+          </div>
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 40 40" width="36" height="36" fill="none">
+              <rect x="4" y="3" width="26" height="34" rx="3" fill="currentColor" opacity="0.15"/>
+              <rect x="4" y="3" width="26" height="34" rx="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M10 13h14M10 19h14M10 25h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="31" cy="31" r="6" fill="currentColor"/>
+              <path d="M28 31l2 2 4-4" stroke="#0f1117" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h1>Заполнитель документов</h1>
+        </header>
 
-      <form id="form" enctype="multipart/form-data" novalidate>
-        <div class="field">
-          <label for="provider">
-            <span class="field-title">1. Выберите ассистента</span>
-            <span class="field-hint">Какую нейросеть использовать для заполнения</span>
-          </label>
-          <select id="provider" name="provider">
-            {% for p in providers %}
-            <option value="{{ p.id }}"
-              data-key-label="{{ p.key_label }}"
-              data-key-placeholder="{{ p.key_placeholder }}"
-              data-extra-label="{{ p.extra_label or '' }}"
-              data-extra-placeholder="{{ p.extra_placeholder or '' }}"
-              data-help="{{ p.help }}"
-              {% if p.id == default_provider %}selected{% endif %}>{{ p.label }}</option>
-            {% endfor %}
-          </select>
-          <p id="provider-help" class="field-note"></p>
-        </div>
+        <form id="form" enctype="multipart/form-data" novalidate>
+          <div class="field">
+            <label for="provider">
+              <span class="field-title">1. Ассистент</span>
+            </label>
+            <select id="provider" name="provider">
+              {% for p in providers %}
+              <option value="{{ p.id }}"
+                data-key-label="{{ p.key_label }}"
+                data-key-placeholder="{{ p.key_placeholder }}"
+                data-extra-label="{{ p.extra_label or '' }}"
+                data-extra-placeholder="{{ p.extra_placeholder or '' }}"
+                data-help="{{ p.help }}"
+                data-key-required="{{ p.key_required | default(true) | lower }}"
+                {% if p.id == default_provider %}selected{% endif %}>{{ p.label }}</option>
+              {% endfor %}
+            </select>
+            <p id="provider-help" class="field-note"></p>
+          </div>
 
-        <div class="field" id="key-field">
-          <label for="api-key">
-            <span class="field-title" id="key-label">Ключ API</span>
-            <span class="field-hint" id="key-hint">
-              Ключ используется только для этого запроса, напрямую уходит в выбранного
-              провайдера и на сервере не сохраняется.
-            </span>
-          </label>
-          <input id="api-key" name="api_key" type="password" autocomplete="off" spellcheck="false" required />
-        </div>
+          <div class="field" id="key-field">
+            <label for="api-key">
+              <span class="field-title" id="key-label">Ключ API</span>
+              <span class="field-hint" id="key-hint">Ключ не сохраняется на сервере.</span>
+            </label>
+            <input id="api-key" name="api_key" type="password" autocomplete="off" spellcheck="false" required />
+          </div>
 
-        <div class="field" id="extra-field" hidden>
-          <label for="extra">
-            <span class="field-title" id="extra-label">Доп. параметр</span>
-            <span class="field-hint" id="extra-hint">
-              Нужен для GigaChat (scope) и YandexGPT (folder_id).
-            </span>
-          </label>
-          <input id="extra" name="extra" type="text" autocomplete="off" spellcheck="false" />
-        </div>
+          <div class="field" id="extra-field" hidden>
+            <label for="extra">
+              <span class="field-title" id="extra-label">Доп. параметр</span>
+            </label>
+            <input id="extra" name="extra" type="text" autocomplete="off" spellcheck="false" />
+          </div>
 
-        <div class="field">
-          <label for="file-template">
-            <span class="field-title">2. Выберите документ для заполнения</span>
-            <span class="field-hint">Word-файл (.docx): анкета, договор, заявление</span>
-          </label>
-          <div class="dropzone" data-target="file-template">
-            <input id="file-template" type="file" name="template" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required />
-            <div class="dropzone-inner">
-              <span class="dropzone-icon" aria-hidden="true">📄</span>
-              <span class="dropzone-text">Нажмите, чтобы выбрать файл</span>
-              <span class="dropzone-name" data-empty="Файл не выбран">Файл не выбран</span>
+          <div class="field">
+            <label for="file-template">
+              <span class="field-title">2. Документ (.docx)</span>
+            </label>
+            <div class="dropzone" data-target="file-template">
+              <input id="file-template" type="file" name="template" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required />
+              <div class="dropzone-inner">
+                <span class="dropzone-icon" aria-hidden="true">📄</span>
+                <span class="dropzone-name" data-empty="Выберите файл">Выберите файл</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="field">
-          <label for="file-data">
-            <span class="field-title">3. Выберите источник информации</span>
-            <span class="field-hint">Откуда брать данные: анкета клиента, таблица, выписка, заметка. Поддерживаются Word, Excel, CSV, текст или JSON.</span>
-          </label>
-          <div class="dropzone" data-target="file-data">
-            <input id="file-data" type="file" name="data"
-              accept=".json,.txt,.md,.csv,.xlsx,.docx,application/json,text/plain,text/csv,text/markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              required />
-            <div class="dropzone-inner">
-              <span class="dropzone-icon" aria-hidden="true">🗂️</span>
-              <span class="dropzone-text">Нажмите, чтобы выбрать файл</span>
-              <span class="dropzone-name" data-empty="Файл не выбран">Файл не выбран</span>
+          <div class="field">
+            <label for="file-data">
+              <span class="field-title">3. Источник данных</span>
+              <span class="field-hint">JSON, Excel, CSV, Word или текст</span>
+            </label>
+            <div class="dropzone" data-target="file-data">
+              <input id="file-data" type="file" name="data"
+                accept=".json,.txt,.md,.csv,.xlsx,.docx,application/json,text/plain,text/csv,text/markdown,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                required />
+              <div class="dropzone-inner">
+                <span class="dropzone-icon" aria-hidden="true">🗂️</span>
+                <span class="dropzone-name" data-empty="Выберите файл">Выберите файл</span>
+              </div>
             </div>
           </div>
+
+          <div class="form-actions">
+            <button type="submit" id="submit">
+              <span class="btn-label">Заполнить</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="preview-original-btn" class="btn-secondary" hidden>Показать оригинал</button>
+          </div>
+        </form>
+
+        <div id="status" class="status" hidden></div>
+      </aside>
+
+      <!-- Right: document preview -->
+      <main class="preview-area" id="preview-area">
+        <div class="preview-toolbar" id="preview-toolbar" hidden>
+          <div class="preview-toolbar-left">
+            <span class="preview-title" id="preview-title">Заполненный документ</span>
+            <span class="preview-badge" id="preview-badge"></span>
+          </div>
+          <div class="preview-toolbar-right">
+            <button type="button" id="download-btn" class="btn-download">Скачать .docx</button>
+          </div>
         </div>
-
-        <button type="submit" id="submit">
-          <span class="btn-label">Заполнить и скачать</span>
-          <span class="btn-spinner" aria-hidden="true"></span>
-        </button>
-      </form>
-
-      <div id="status" class="status" hidden></div>
-
-      <section class="hint">
-        <h2>Как это работает</h2>
-        <ul>
-          <li>
-            Если в документе есть метки вида <code>{{'{{ имя }}'}}</code>, <code>{ имя }</code>
-            или <code>[ имя ]</code> — ассистент подставит значения именно на их места.
-          </li>
-          <li>
-            Если меток нет — ассистент сам найдёт в документе пустые поля
-            и аккуратно заполнит их, опираясь на ваш источник информации.
-          </li>
-          <li>
-            Оформление документа не пострадает: шрифты, размеры, ширина колонок
-            и структура таблиц сохраняются.
-          </li>
-          <li class="muted-note">
-            Ключ провайдера вводится только в браузере и уходит напрямую
-            в запрос — на сервере он не сохраняется и не логируется.
-          </li>
-        </ul>
-      </section>
-    </main>
+        <div class="preview-container" id="preview-container">
+          <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <h2>Здесь будет документ</h2>
+            <p>Загрузите шаблон и данные, нажмите «Заполнить» — результат отобразится прямо в браузере.</p>
+          </div>
+        </div>
+      </main>
+    </div>
 
     <script>
+      // Theme toggle
+      (function initTheme() {
+        const saved = localStorage.getItem("theme");
+        if (saved) document.documentElement.setAttribute("data-theme", saved);
+      })();
+      const themeToggleBtn = document.getElementById("theme-toggle");
+      themeToggleBtn.textContent = document.documentElement.getAttribute("data-theme") === "light" ? "☀️" : "🌙";
+      themeToggleBtn.addEventListener("click", () => {
+        const current = document.documentElement.getAttribute("data-theme");
+        const next = current === "light" ? "dark" : "light";
+        if (next === "dark") {
+          document.documentElement.removeAttribute("data-theme");
+        } else {
+          document.documentElement.setAttribute("data-theme", next);
+        }
+        localStorage.setItem("theme", next);
+        themeToggleBtn.textContent = next === "light" ? "☀️" : "🌙";
+      });
+
       const form = document.getElementById("form");
       const statusBox = document.getElementById("status");
       const submit = document.getElementById("submit");
+      const previewContainer = document.getElementById("preview-container");
+      const previewToolbar = document.getElementById("preview-toolbar");
+      const previewTitle = document.getElementById("preview-title");
+      const previewBadge = document.getElementById("preview-badge");
+      const downloadBtn = document.getElementById("download-btn");
+      const previewOriginalBtn = document.getElementById("preview-original-btn");
 
-      // Provider selector → sync labels / placeholders
+      let lastFilledBlob = null;
+      let lastFilledFilename = null;
+      let originalTemplateFile = null;
+
+      // Provider selector
       const providerSelect = document.getElementById("provider");
-      const keyField = document.getElementById("key-field");
       const keyLabel = document.getElementById("key-label");
       const keyHint = document.getElementById("key-hint");
       const keyInput = document.getElementById("api-key");
@@ -149,8 +173,10 @@
         const opt = providerSelect.options[providerSelect.selectedIndex];
         keyLabel.textContent = opt.dataset.keyLabel || "Ключ API";
         keyInput.placeholder = opt.dataset.keyPlaceholder || "";
-        keyHint.textContent =
-          "Ключ используется только для этого запроса, напрямую уходит в выбранного провайдера и на сервере не сохраняется.";
+        const keyRequired = opt.dataset.keyRequired !== "false";
+        keyInput.required = keyRequired;
+        keyInput.type = keyRequired ? "password" : "text";
+        keyHint.textContent = keyRequired ? "Ключ не сохраняется на сервере." : "";
         const extraLbl = opt.dataset.extraLabel || "";
         if (extraLbl) {
           extraField.hidden = false;
@@ -165,9 +191,8 @@
       providerSelect.addEventListener("change", syncProvider);
       syncProvider();
 
-      // File name label update
+      // File name labels
       document.querySelectorAll(".dropzone").forEach((zone) => {
-        const targetId = zone.getAttribute("data-target");
         const input = zone.querySelector("input[type=file]");
         const label = zone.querySelector(".dropzone-name");
         const empty = label.getAttribute("data-empty");
@@ -182,6 +207,39 @@
         });
       });
 
+      // Preview original template on file select
+      const templateInput = document.getElementById("file-template");
+      templateInput.addEventListener("change", async () => {
+        if (!templateInput.files || !templateInput.files.length) return;
+        originalTemplateFile = templateInput.files[0];
+        await renderDocxPreview(originalTemplateFile, "Шаблон (оригинал)");
+        previewOriginalBtn.hidden = true;
+      });
+
+      async function renderDocxPreview(blobOrFile, title) {
+        previewContainer.innerHTML = "";
+        previewToolbar.hidden = false;
+        previewTitle.textContent = title || "Документ";
+        previewBadge.textContent = "";
+        try {
+          const arrayBuffer = await blobOrFile.arrayBuffer();
+          await docx.renderAsync(arrayBuffer, previewContainer, null, {
+            className: "docx-preview",
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            ignoreFonts: false,
+            breakPages: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+          });
+        } catch (e) {
+          previewContainer.innerHTML = '<div class="preview-error">Не удалось отобразить документ: ' + e.message + '</div>';
+        }
+      }
+
+      // Form submit → fill + preview
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         statusBox.hidden = false;
@@ -202,17 +260,17 @@
           const filename = parseFilename(disposition) || "Заполненный документ.docx";
           const changed = response.headers.get("X-Fill-Changed-Paragraphs") || "?";
 
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
+          lastFilledBlob = blob;
+          lastFilledFilename = filename;
+
+          // Render preview
+          await renderDocxPreview(blob, "Заполненный документ");
+          previewBadge.textContent = "Заполнено полей: " + changed;
+          downloadBtn.hidden = false;
+          previewOriginalBtn.hidden = false;
 
           statusBox.className = "status ok";
-          statusBox.textContent = `Готово. Заполнено полей: ${changed}. Файл сохраняется в «Загрузки».`;
+          statusBox.textContent = "Готово. Заполнено полей: " + changed + ". Документ показан справа.";
         } catch (err) {
           statusBox.className = "status err";
           statusBox.textContent = err.message;
@@ -222,8 +280,27 @@
         }
       });
 
+      // Download button
+      downloadBtn.addEventListener("click", () => {
+        if (!lastFilledBlob) return;
+        const url = URL.createObjectURL(lastFilledBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = lastFilledFilename || "filled.docx";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      });
+
+      // Show original button
+      previewOriginalBtn.addEventListener("click", async () => {
+        if (!originalTemplateFile) return;
+        await renderDocxPreview(originalTemplateFile, "Шаблон (оригинал)");
+        previewBadge.textContent = "";
+      });
+
       function parseFilename(disposition) {
-        // Prefer RFC 5987 filename*= (UTF-8) over ASCII filename=
         const starMatch = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition);
         if (starMatch) {
           try { return decodeURIComponent(starMatch[1]); } catch (_) {}
@@ -233,10 +310,10 @@
       }
 
       function friendlyError(status, detail) {
-        if (status === 400) return `Файл не принят: ${detail}`;
-        if (status === 502) return `Ассистент не смог обработать документ: ${detail}`;
-        if (status === 500) return `Внутренняя ошибка сервиса. Попробуйте ещё раз через минуту.`;
-        return `Ошибка ${status}: ${detail}`;
+        if (status === 400) return "Файл не принят: " + detail;
+        if (status === 502) return "Ассистент не смог обработать документ: " + detail;
+        if (status === 500) return "Внутренняя ошибка сервиса. Попробуйте ещё раз через минуту.";
+        return "Ошибка " + status + ": " + detail;
       }
     </script>
   </body>
