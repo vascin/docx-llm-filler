@@ -13,3 +13,4 @@ build/
 *.log
 .DS_Store
 node_modules/
+editor/ai-keys.local.json

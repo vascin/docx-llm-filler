@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DOCX Редактор</title>
+  <script src="jszip.min.js"></script>
+  <script src="FileSaver.min.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="layout" id="layout">
+  <main class="main" id="main">
+    <div class="toolbar">
+      <div class="toolbar-left" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <div class="toolbar-title">DOCX</div>
+        <button class="btn btn-primary btn-sm" title="Загрузить DOCX" onclick="document.getElementById('fileInput').click()">📥 DOCX</button>
+        <input type="file" id="fileInput" accept=".docx">
+        <select id="modelSelect" class="btn btn-sm" style="font-size:11px;padding:4px 6px;">
+          <option value="ollama">🖥️ Ollama</option>
+          <option value="gemini" selected>🌐 Gemini</option>
+          <option value="wormsoft">🧠 Wormsoft</option>
+          <option value="gigachat">💜 GigaChat</option>
+          <option value="yandex">🟡 Yandex</option>
+        </select>
+        <select id="ollamaModelName" class="btn btn-sm" style="font-size:10px;padding:3px;" title="Ollama model">
+          <option value="">Загрузка...</option>
+        </select>
+        <select id="geminiModelName" class="btn btn-sm" style="font-size:10px;padding:3px;display:none;" title="Gemini model">
+          <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+          <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+          <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+        </select>
+        <select id="wormsoftModelName" class="btn btn-sm" style="font-size:10px;padding:3px;display:none;" title="Wormsoft model">
+          <option value="wormsoft/agent/low">wormsoft/agent/low</option>
+          <option value="wormsoft/agent/medium">wormsoft/agent/medium</option>
+          <option value="wormsoft/agent/high">wormsoft/agent/high</option>
+          <option value="wormsoft/code/low">wormsoft/code/low</option>
+          <option value="wormsoft/code/medium">wormsoft/code/medium</option>
+          <option value="wormsoft/code/high">wormsoft/code/high</option>
+          <option value="openai/gpt-5.2">openai/gpt-5.2</option>
+          <option value="openai/gpt-5.4">openai/gpt-5.4</option>
+          <option value="openai/gpt-5.4-mini" selected>openai/gpt-5.4-mini</option>
+          <option value="openai/gpt-5.5">openai/gpt-5.5</option>
+          <option value="openai/gpt-5.2-codex">openai/gpt-5.2-codex</option>
+          <option value="openai/gpt-5.3-codex">openai/gpt-5.3-codex</option>
+          <option value="zai/glm-5.1">zai/glm-5.1</option>
+          <option value="qwen/qwen3.5-plus">qwen/qwen3.5-plus</option>
+          <option value="qwen/qwen3.6-plus">qwen/qwen3.6-plus</option>
+          <option value="qwen/qwen3.5-35b">qwen/qwen3.5-35b</option>
+          <option value="google/gemma4:26b">google/gemma4:26b</option>
+        </select>
+        <input type="password" id="apiKey" placeholder="API Key" style="font-size:10px;width:100px;padding:3px;display:none;" title="API Key">
+        <button id="fillOllamaBtn" class="btn btn-warning btn-sm" disabled>🤖 AI</button>
+        <button id="saveBtn" class="btn btn-success btn-sm" disabled>💾 Скачать</button>
+        <div id="ollamaStatus" class="ollama-status" style="font-size:11px;"></div>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn btn-sm" id="toggleLogsBtn" onclick="toggleLogs()" style="font-size:10px;">📋 Логи</button>
+        <button class="btn btn-icon help-btn" id="themeToggle" onclick="toggleTheme()">🌙</button>
+        <button class="btn btn-icon help-btn" onclick="showHelp()">❓</button>
+        <span class="status" id="status">Загрузите DOCX</span>
+        <span class="stats" id="stats">0</span>
+      </div>
+    </div>
+    <div class="editor" id="editor">
+      <div class="empty-state">
+        <h2>Готов к работе</h2>
+        <p>Загрузите DOCX файл с таблицами и перетащите значения из правой панели в ячейки</p>
+      </div>
+    </div>
+    <div id="debugLog" style="position:fixed;bottom:0;left:0;width:50%;height:200px;background:#1e1e2e;color:#cdd6f4;font-family:monospace;font-size:11px;padding:30px 8px 8px 8px;overflow:auto;z-index:9999;display:none;box-sizing:border-box;border-right:2px solid #333;">
+      <button onclick="navigator.clipboard.writeText(this.parentElement.innerText)" style="position:absolute;top:4px;right:8px;background:none;border:none;color:#fff;cursor:pointer;font-size:10px;">📋</button>
+    </div>
+    <div id="ollamaResponse" style="position:fixed;bottom:0;left:50%;width:50%;height:200px;background:#0d0d0d;color:#00ff00;font-family:monospace;font-size:12px;padding:30px 12px 12px 12px;overflow:auto;z-index:9999;display:none;white-space:pre-wrap;line-height:1.4;box-sizing:border-box;">
+      <button onclick="navigator.clipboard.writeText(document.getElementById('ollamaResponseText').innerText)" style="position:absolute;top:4px;right:8px;background:none;border:none;color:#fff;cursor:pointer;font-size:10px;">📋</button>
+      <div style="position:absolute;top:4px;right:36px;font-size:10px;">
+        <button onclick="document.getElementById('ollamaResponse').style.display='none'" style="background:none;border:none;color:#fff;cursor:pointer;">✕</button>
+      </div>
+      <div id="ollamaResponseText"></div>
+    </div>
+  </main>
+
+  <div class="resizer" id="resizer"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="header-row">
+        <h3>📊 Уровни данных</h3>
+        <label class="toggle-switch">
+          <input type="checkbox" id="editToggle">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">Редакт.</span>
+        </label>
+      </div>
+    </div>
+    <div class="sidebar-controls">
+      <label for="jsonFileInput" class="btn btn-secondary">📂 Загрузить</label>
+      <input type="file" id="jsonFileInput" accept=".json">
+      <button class="btn btn-muted" onclick="addRootGroup()">＋ Уровень</button>
+      <button class="btn btn-secondary" onclick="toggleAllGroups(true)">▼ Все</button>
+      <button class="btn btn-secondary" onclick="toggleAllGroups(false)">▶ Все</button>
+      <button class="btn btn-success" onclick="saveTreeJSON()" disabled>💾 Сохранить</button>
+    </div>
+    <div class="tree-container" id="treeContainer"></div>
+  </aside>
+</div>
+
+<div class="toast" id="toast"></div>
+
+
+<div class="modal-overlay" id="helpModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>📖 Инструкция</h3>
+      <button class="modal-close" onclick="closeHelp()">×</button>
+    </div>
+    <div class="modal-body">
+      <h4>Запуск приложения</h4>
+      <p>Откройте файл editor.html в браузере. Нажмите «Загрузить» в правой панели для загрузки данных из JSON-файла.</p>
+
+      <h4>Интерфейс</h4>
+      <p>Приложение состоит из двух панелей:</p>
+      <ul>
+        <li><b>Левая панель</b> — DOCX документ с полями для заполнения</li>
+        <li><b>Правая панель</b> — дерево данных JSON (категории и поля)</li>
+      </ul>
+
+      <h4>Кнопки управления JSON</h4>
+      <ul>
+        <li><b>Загрузить</b> — загрузить данные из JSON-файла</li>
+        <li><b>Сохранить</b> — сохранить текущие данные в JSON-файл</li>
+      </ul>
+      <p><em>JSON-файл — это <b>библиотека</b> с категориями и полями. По умолчанию файл data.json лежит в папке с приложением. Можно подгрузить обновлённую версию из другого места.</em></p>
+
+      <h4>Режим редактирования</h4>
+      <p>Переключатель в правой верхней части панели дерева:</p>
+      <table>
+        <tr><th>Состояние</th><th>Цвет</th><th>Доступно</th></tr>
+        <tr><td>Выкл (по умолчанию)</td><td>Серый</td><td>Только перетаскивание в документ</td></tr>
+        <tr><td>Вкл</td><td>Зелёный</td><td>Полное редактирование дерева</td></tr>
+      </table>
+      <p><b>Важно:</b> После загрузки страницы редактирование отключено. Для добавления/изменения полей и категорий переключите режим в положение ВКЛ.</p>
+
+      <h4>Загрузка DOCX шаблона</h4>
+      <ul>
+        <li>Нажмите кнопку «Загрузить» или используйте Ctrl+O</li>
+        <li>Выберите файл шаблона .docx</li>
+        <li>Документ отобразится в левой панели</li>
+        <li>При наведении ячейка будет подсвечена</li>
+      </ul>
+
+      <h4>Перетаскивание полей в документ</h4>
+      <ul>
+        <li>Найдите нужное поле в дереве (справа)</li>
+        <li>Зажмите кнопку 📋 рядом с полем и перетащите в нужную ячейку документа</li>
+        <li>Отпустите — значение будет вставлено</li>
+      </ul>
+      <p>Это работает в обоих режимах (Вкл/Выкл).</p>
+
+      <h4>Добавление/редактирование данных</h4>
+      <ul>
+        <li>Переключите режим редактирования в положение ВКЛ (зелёный)</li>
+        <li><b>Добавить категорию:</b> Нажмите «＋ Уровень»</li>
+        <li><b>Добавить поле:</b> Нажмите «＋ Поле» внутри категории</li>
+        <li><b>Редактировать название/значение:</b> Кликните на текст и введите новое значение</li>
+        <li><b>Удалить:</b> Нажмите кнопку ✕ рядом с элементом</li>
+        <li><b>Переместить:</b> Используйте ручку (⠿) для сортировки</li>
+      </ul>
+
+      <h4>Сохранение документа</h4>
+      <ul>
+        <li>Нажмите кнопку «Скачать» или используйте Ctrl+S</li>
+        <li>Файл будет скачан в папку загрузок с заполненными данными</li>
+      </ul>
+
+      <h4>Сохранение данных дерева</h4>
+      <ul>
+        <li>Нажмите кнопку «Сохранить» в правой панели</li>
+        <li>Файл будет скачан в папку загрузок</li>
+      </ul>
+
+      <h4>AI заполнение (Ollama)</h4>
+      <p>Для работы с локальной моделью нужна <b>Ollama</b> с разрешённым CORS:</p>
+      <ul>
+        <li><b>Windows:</b> Установите переменную среды <code>OLLAMA_ORIGINS=*</code> и перезапустите Ollama</li>
+        <li><b>Linux/Mac:</b> <code>OLLAMA_ORIGINS=* ollama serve</code></li>
+        <li>Рекомендуемые модели для слабого CPU: <b>gemma3:1b</b>, <b>qwen2.5:1.5b</b></li>
+        <li>Для Gemini/GigaChat/Yandex введите API ключ в соответствующее поле</li>
+      </ul>
+
+      <h4>Горячие клавиши</h4>
+      <table>
+        <tr><th>Действие</th><th>Windows</th><th>Mac</th></tr>
+        <tr><td>Скачать DOCX</td><td>Ctrl+S</td><td>Cmd+S</td></tr>
+        <tr><td>Загрузить DOCX</td><td>Ctrl+O</td><td>Cmd+O</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="js/state.js?v=r2026.04.26.fix1"></script>
+<script src="js/utils.js?v=r2026.04.26.fix1"></script>
+<script src="js/ui.js?v=r2026.04.26.fix1"></script>
+<script src="js/tree.js?v=r2026.04.26.fix1"></script>
+<script src="js/docx.js?v=r2026.04.26.fix1"></script>
+<script src="js/providers.js?v=r2026.04.26.fix1"></script>
+<script src="js/parse.js?v=r2026.04.26.fix1"></script>
+<script src="js/matching.js?v=r2026.04.26.fix1"></script>
+<script src="js/ai.js?v=r2026.04.26.fix1"></script>
+<script src="js/main.js?v=r2026.04.26.fix1"></script>
+</body>
+</html>
