@@ -1,30 +1,43 @@
 # docx-llm-filler
 
-Онлайн-сервис, который заполняет Word-шаблоны (`.docx`) с помощью LLM
-(Google Gemini) и произвольного JSON-файла с данными. На входе — шаблон
-и JSON, на выходе — заполненный `.docx`.
+Два инструмента для заполнения Word-шаблонов (`.docx`) с помощью LLM.
 
-Есть и веб-интерфейс (форма загрузки), и REST API, так что сервисом можно
-пользоваться как из браузера, так и из других систем.
+## Два варианта использования
 
-## Возможности
+### 1. Браузерный редактор (`editor/`)
 
-- **Два режима заполнения.** Если в шаблоне есть плейсхолдеры вида
-  `{{ имя }}`, `{ имя }` или `[ имя ]` — LLM возвращает словарь
-  `{плейсхолдер: значение}` и они подставляются на места. Если плейсхолдеров
-  нет — LLM проходит по абзацам и сам заполняет пустые поля, опираясь
-  на JSON.
-- **Любой JSON.** Как словарь готовых значений (`{"имя": "Иван"}`), так и
-  база знаний / контекст, из которого модель извлекает нужные поля.
-- **Замена провайдера.** В `app/gemini_client.py` определён протокол
-  `LLMClient` — легко подключить Claude, OpenAI, YandexGPT и т.п.
+Standalone HTML-приложение (без Node.js) с рендерингом документа прямо в браузере.
+
+- Рендеринг DOCX с корректными полями страницы и шириной таблиц
+- Дерево JSON-данных с drag-and-drop в ячейки документа
+- 5 LLM-провайдеров: Gemini, Wormsoft, GigaChat, YandexGPT, Ollama
+- Серверный прокси для Gemini (обход гео-блокировки)
+- Тёмная/светлая тема
+- Автоподстановка дат
+
+**Запуск:** открыть `editor/editor.html` в браузере или через сервер:
+```bash
+pip install fastapi uvicorn httpx
+cd editor && uvicorn server:app --reload
+```
+
+**Деплой:** https://docx-editor-jirstmod.fly.dev/
+
+### 2. Серверный API (`app/`)
+
+FastAPI-сервис с REST API и веб-формой загрузки.
+
+- Два режима: по плейсхолдерам (`{{ имя }}`) и свободный (LLM сам находит пустые поля)
+- 3 LLM-провайдера: Gemini, GigaChat, YandexGPT
+- Поддержка .json, .txt, .md, .csv, .xlsx, .docx как источник данных
+- Ключи вводятся только на странице — сервер их не хранит
 
 ## Требования
 
-- Python 3.10+
-- API-ключ Google Gemini (бесплатно получить: <https://aistudio.google.com/apikey>)
+- **Редактор:** современный браузер (Chrome, Firefox, Edge)
+- **API:** Python 3.10+, API-ключ одного из провайдеров
 
-> Для free tier важно: модель `gemini-2.0-flash` гео-заблокирована в РФ и ряде других стран (возвращает `limit: 0`). По умолчанию используется `gemini-2.5-flash-lite` — она работает в free tier без геоограничений.
+> Gemini: модель `gemini-2.5-flash` работает в free tier. Из РФ доступна через серверный прокси.
 
 ## Установка
 
@@ -94,12 +107,20 @@ ruff check .      # линт
 ## Структура
 
 ```
-app/
-  config.py         # переменные окружения
-  gemini_client.py  # обёртка над google-genai + протокол LLMClient
-  docx_filler.py    # режимы placeholder / freeform
-  main.py           # FastAPI: /, /fill, /health
-templates/index.html
+editor/               # Браузерный редактор
+  editor.html         # Главная страница
+  js/                 # JS-модули (state, utils, ui, tree, docx, ai, ...)
+  css/style.css       # Стили с CSS-переменными для тем
+  server.py           # FastAPI-сервер + Gemini-прокси
+  data.json           # Данные с автоподстановкой дат
+app/                  # Серверный API
+  config.py           # Переменные окружения
+  gemini_client.py    # Google Gemini + протокол LLMClient
+  gigachat_client.py  # GigaChat (Сбер) с Russian Trusted CA
+  yandex_client.py    # YandexGPT
+  docx_filler.py      # Режимы placeholder / freeform
+  main.py             # FastAPI: /, /fill, /health
+templates/index.html  # UI для серверного API
 static/style.css
 tests/
 ```
